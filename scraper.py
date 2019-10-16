@@ -110,7 +110,6 @@ if len(yourItems) == len(theirItems):
         G.add_nodes_from([theirItems[i],yourItems[i]])
         G.add_edge(theirItems[i],yourItems[i])
 
-# nx.set_node_attributes(G, )
 nx.draw(G, with_labels=True)
 plt.show()
 
