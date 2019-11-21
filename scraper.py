@@ -1,121 +1,83 @@
-from bs4 import BeautifulSoup
-import requests
+from rocket_league_api import *
 import networkx as nx
 import matplotlib.pyplot as plt
+from collections import deque
 
-"""
-Next Steps:
-2. Parse all trades from one page
-3. Parse all trades from multiple pages
-4. Parse all trades on right side of trades (iterate through more trades)
-5. Add support for multiple quantities
+blacklistItems = {
+544,  
+1701, 
+1702,
+1703,
+1704,
+1705,
+1706,
+1707,
+1708,
+1709  
+}
 
-TODO:
-1. Don't save item name in item object
-2. Block all offer ids
-"""
-paintNames = {}
-paintNames['0'] = ''
-paintNames['1'] = 'Burnt Sienna'
-paintNames['2'] = 'Lime'
-paintNames['3'] = 'Titanium White'
-paintNames['4'] = 'Cobalt'
-paintNames['5'] = 'Crimson'
-paintNames['6'] = 'Forest Green'
-paintNames['7'] = 'Grey'
-paintNames['8'] = 'Orange'
-paintNames['9'] = 'Pink'
-paintNames['10'] = 'Purple'
-paintNames['11'] = 'Saffron'
-paintNames['12'] = 'Sky Blue'
-paintNames['13'] = 'Black'
+# trades is a list of trade objects
+def addTradesToGraph(graph, trades):
+    for trade in trades:
+        if trade.isValid():
+            for i in range(len(trade.yourItems)):
+                addItemsToGraph(graph, trade.theirItems[i], trade.yourItems[i])
+                if trade.theirItems[i].quantity > 1:
+                    addLowerQuantities(graph, trade.theirItems[i])
+                if trade.yourItems[i].quantity > 1:
+                    addLowerQuantities(graph, trade.yourItems[i])
+    return graph
 
-class Item:
-    def __init__(self, itemID, certification, paintID, platform, itemName = "", paintName = "", quantity=1):
-        self.itemID = itemID
-        self.certification = certification
-        self.paintID = paintID
-        self.platform = platform
-        self.itemName = itemName
-        self.paintName = paintName
-        self.quantity = quantity
+# Adds the lower quantities of the given item
+def addLowerQuantities(graph, item):
+    lastItem = item
+    while lastItem.quantity > 1:
+        newItem = copy.copy(lastItem)
+        newItem.quantity = lastItem.quantity - 1
+        graph.add_node(newItem)
+        graph.add_edge(lastItem, newItem)
+        lastItem = newItem
 
-    def __eq__(self, other):
-        if isinstance(other, Item):
-            return self.itemID == other.itemID and self.certification == other.certification and self.paintID == other.paintID and self.platform == other.platform
-        else:
-            return False
+# Adds 2 items to graph and an edge from 1 to 2
+def addItemsToGraph(graph, item1, item2):
+    graph.add_nodes_from([item1,item2])
+    graph.add_edge(item1,item2)
 
-    def __hash__(self):
-        return hash((self.itemID, self.certification, self.paintID, self.platform))
+# Initiates search for your desiredItem from yourItem
+# yourItem: Item object that you own
+# searchItem: Item object that you want
+def startTradeSearch(yourItem, searchItem):
+    visitedItems = set()
+    queue = deque()
+    G = nx.DiGraph()
+    queue.append(yourItem)
+    shouldBreak = False
+    # TODO: change this to a real termination condition
+    # i = 0
+    # while True:
+    for i in range(1):
+        print("i: ", i)
+        newItem = queue.pop()
+        print("Searching for item: ", newItem)
+        newURL = buildURL(item=newItem) 
+        trades = processPage(newURL)
+        addTradesToGraph(G, trades)
+        for trade in trades:
+            # TODO: only add items that can be traded for yourItem (maybe)
+            for theirItem in trade.theirItems:
+                if theirItem not in visitedItems:
+                    visitedItems.add(theirItem)
+                    queue.append(theirItem)
+                    if nx.all_simple_paths(G, yourItem, searchItem):
+                        print("Found trade path!")
+                        printPaths(yourItem, searchItem, G)
+                        return
 
-    def __str__(self):
-        return "{} {} ({})".format(self.paintName, self.itemName, self.quantity)
-
-
-# build url from params
-def buildURL(filterItem = 0, filterCertification=0, filterPaint = 0, filterPlatform = 1, filterSearchType = 1):
-    return 'https://rocket-league.com/trading?filterItem={}&filterCertification={}&filterPaint={}&filterPlatform={}&filterSearchType={}'.format(filterItem, filterCertification, filterPaint, filterPlatform, filterSearchType)   
-
-# parse the item attributes from href of item
-def parseHref(href):  
-    attributes = href.strip('?').split('&')
-    args = [attribute.split('=')[1] for attribute in attributes]
-    item = Item(*args, 1)
-    return item
-
-# Convert html item to item object
-def soupItemToItems(soupItems):
-    items = []
-    for soupItem in soupItems:
-        newItem = parseHref(soupItem.get('href'))
-        newItem.itemName = getItemNameFromSoup(soupItem)
-        newItem.paintName = paintNames.get(newItem.paintID, '')
-        newItem.quantity = getQuantityFromSoup(soupItem)
-        items.append(newItem)
-    return items   
-
-def getItemNameFromSoup(soupItem):
-    return soupItem.find('h2').text
-
-def getQuantityFromSoup(soupItem):
-    quantityAttempt = soupItem.find(attrs={'class': 'rlg-trade-display-item__amount is--premium'})
-    if quantityAttempt:
-        return quantityAttempt.text
-    return 1
-# Get Soup object from url
-def getPage(url):
-    result = requests.get(url)
-    return BeautifulSoup(result.content, 'html.parser')
-
-# Get item objects from left side of trade
-def getYourItems(soup):
-    yourSoupItems = soup.find(id='rlg-youritems').findAll('a')
-    return soupItemToItems(yourSoupItems)
-
-# Get item objects from right side of trade
-def getTheirItems(soup):           
-    theirSoupItems = soup.find(id='rlg-theiritems').findAll('a')
-    return soupItemToItems(theirSoupItems)
+def printPaths(yourItem, searchItem, graph):
+    for path in nx.all_simple_paths(graph, yourItem, searchItem):
+        print(path)
 
 
-page = getPage(buildURL(filterItem=1,filterPaint=2))
-yourItems = getYourItems(page)
-theirItems = getTheirItems(page)
-
-G = nx.DiGraph()
-# Only look at trades that are 1:1 and have the same amount of items
-if len(yourItems) == len(theirItems):
-    for i in range(len(yourItems)):
-        G.add_nodes_from([theirItems[i],yourItems[i]])
-        G.add_edge(theirItems[i],yourItems[i])
-
-nx.draw(G, with_labels=True)
-plt.show()
-
-# page = getPage(buildURL(filterItem=496))
-# yourSoupItems = page.find(id='rlg-youritems').findAll('a')
-# for soupItem in yourSoupItems:
-#     quantityAttempt = soupItem.find(attrs={'class': 'rlg-trade-display-item__amount is--premium'})
-#     if quantityAttempt:
-#         print(quantityAttempt.text)
+startTradeSearch(Item(itemID=605), Item(itemID=1779, paintID=2))
+# print(buildURL(item=Item(itemID=691, paintID=9)))
+# print(list(nx.shortest_simple_paths(G, Item(itemID=496), Item(itemID=691, paintID=9), weight=None)))
